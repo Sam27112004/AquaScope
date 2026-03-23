@@ -1,0 +1,27 @@
+# Inference-specific configuration.
+# Values here are deep-merged on top of base_config.yaml.
+
+defaults:
+  - base_config
+
+task: detection
+model: yolo
+checkpoint: experiments/checkpoints/best.pt
+
+inference:
+  confidence_threshold: 0.35
+  iou_threshold: 0.45
+  max_detections: 100
+  batch_size: 1
+
+video:
+  source: null            # path to video file or device index (e.g. 0)
+  output_dir: experiments/results/
+  save_annotated: true
+  show_live: false
+  frame_skip: 0           # process every N+1 frames (0 = every frame)
+
+postprocessing:
+  apply_nms: true
+  track_objects: false    # set true to enable object tracking
+  tracker: bytetrack      # bytetrack | sort

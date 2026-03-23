@@ -1,0 +1,47 @@
+# Base configuration shared across all runs.
+# Override individual keys in training_config.yaml or inference_config.yaml.
+
+project:
+  name: aquascope
+  version: "0.1.0"
+
+# -----------------------------------------------------------------
+# Model registry — add new model slugs here and implement them under
+# models/<task>/<slug>_<task>.py
+# -----------------------------------------------------------------
+models:
+  registry:
+    detection:
+      - yolo
+      - faster_rcnn
+    segmentation:
+      - unet
+    classification:
+      - resnet
+
+# -----------------------------------------------------------------
+# Dataset paths (override per experiment)
+# -----------------------------------------------------------------
+datasets:
+  root: datasets/
+  raw_dir: datasets/raw/
+  processed_dir: datasets/processed/
+  annotations_dir: datasets/annotations/
+  image_size: [640, 640]
+  num_workers: 4
+
+# -----------------------------------------------------------------
+# Hardware
+# -----------------------------------------------------------------
+device: cuda          # cuda | cpu | mps
+mixed_precision: true
+
+# -----------------------------------------------------------------
+# Experiment tracking
+# -----------------------------------------------------------------
+tracking:
+  backend: mlflow     # mlflow | tensorboard | none
+  experiment_name: aquascope_default
+  log_dir: experiments/logs/
+  checkpoint_dir: experiments/checkpoints/
+  results_dir: experiments/results/

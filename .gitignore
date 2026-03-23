@@ -1,0 +1,41 @@
+# Byte-compiled / optimised
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Datasets (store externally or via DVC)
+datasets/raw/
+datasets/processed/
+datasets/annotations/
+
+# Experiment artefacts
+experiments/logs/
+experiments/checkpoints/
+experiments/results/
+
+# MLflow
+mlruns/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials
+*.env
+.env*
+secrets/

@@ -1,0 +1,35 @@
+# Training-specific configuration.
+# Values here are deep-merged on top of base_config.yaml.
+
+defaults:
+  - base_config
+
+task: detection           # detection | segmentation | classification
+model: yolo               # must match a slug in models.registry.<task>
+
+training:
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  lr_scheduler: cosine    # cosine | step | plateau
+  warmup_epochs: 3
+  early_stopping_patience: 10
+  save_best_only: true
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: false
+  random_brightness_contrast: true
+  mosaic: true
+  mixup: false
+
+loss:
+  detection: ciou          # ciou | giou | diou
+  classification: cross_entropy
+  segmentation: dice_bce
+
+validation:
+  split: 0.15
+  iou_threshold: 0.5
+  confidence_threshold: 0.25
