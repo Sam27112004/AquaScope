@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -119,7 +120,7 @@ class Trainer:
         running_loss = 0.0
 
         for batch_idx, (images, targets) in enumerate(loader):
-            images = self._to_device(images)
+            images = self._prepare_images(images)
             targets = self._to_device(targets)
 
             self.optimizer.zero_grad()
@@ -146,7 +147,7 @@ class Trainer:
         running_loss = 0.0
 
         for images, targets in loader:
-            images = self._to_device(images)
+            images = self._prepare_images(images)
             targets = self._to_device(targets)
             with torch.amp.autocast(
                 device_type=self.device.type, enabled=self.mixed_precision
@@ -165,3 +166,22 @@ class Trainer:
         if isinstance(data, dict):
             return {k: self._to_device(v) for k, v in data.items()}
         return data
+
+    def _prepare_images(self, images: Any) -> torch.Tensor:
+        """Convert collated image batches to a tensor [B, C, H, W]."""
+        if isinstance(images, torch.Tensor):
+            return images.to(self.device, non_blocking=True)
+
+        if isinstance(images, list):
+            if not images:
+                raise ValueError("Received empty image batch")
+
+            first = images[0]
+            if isinstance(first, torch.Tensor):
+                return torch.stack([img.to(self.device, non_blocking=True) for img in images], dim=0)
+
+            if isinstance(first, np.ndarray):
+                tensors = [torch.from_numpy(img).permute(2, 0, 1).float() for img in images]
+                return torch.stack(tensors, dim=0).to(self.device, non_blocking=True)
+
+        raise TypeError(f"Unsupported image batch type: {type(images)}")

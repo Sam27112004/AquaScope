@@ -16,6 +16,7 @@ Example::
 
 from __future__ import annotations
 
+import importlib
 from typing import Type
 
 from aquascope.models.base_model import BaseModel
@@ -41,6 +42,7 @@ class ModelRegistry:
         Raises:
             KeyError: If the (*task*, *slug*) combination is not registered.
         """
+        cls._lazy_discover_models()
         try:
             model_cls = cls._registry[task][slug]
         except KeyError:
@@ -50,6 +52,13 @@ class ModelRegistry:
                 f"Available models: {available}"
             ) from None
         return model_cls(num_classes=num_classes, **kwargs)
+
+    @classmethod
+    def _lazy_discover_models(cls) -> None:
+        """Import model modules so decorator-based registration runs."""
+        importlib.import_module("aquascope.models.detection")
+        importlib.import_module("aquascope.models.segmentation")
+        importlib.import_module("aquascope.models.classification")
 
     @classmethod
     def list_models(cls) -> dict[str, list[str]]:

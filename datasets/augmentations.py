@@ -32,15 +32,15 @@ def build_augmentation_pipeline(
     if mode == "train":
         return A.Compose(
             [
-                A.RandomResizedCrop(height=h, width=w, scale=(0.7, 1.0)),
+                A.RandomResizedCrop(size=(h, w), scale=(0.7, 1.0)),
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.1),
                 A.RandomRotate90(p=0.2),
                 # Underwater colour correction simulation
                 A.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=0.5),
-                A.RandomFog(fog_coef_lower=0.05, fog_coef_upper=0.2, p=0.2),
+                A.RandomFog(alpha_coef=0.08, fog_coef_range=(0.05, 0.2), p=0.2),
                 A.GaussianBlur(blur_limit=(3, 5), p=0.2),
-                A.GaussNoise(var_limit=(10.0, 50.0), p=0.2),
+                A.GaussNoise(std_range=(0.02, 0.08), p=0.2),
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2(),
             ],

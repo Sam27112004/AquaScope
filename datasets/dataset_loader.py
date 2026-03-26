@@ -45,6 +45,31 @@ DEFAULT_CLASS_NAMES = [
 ]
 
 
+def _apply_detection_transform(image, target: dict, transform):
+    """Apply Albumentations-like transform to detection sample safely."""
+    boxes_tensor = target.get("boxes")
+    labels_tensor = target.get("labels")
+
+    bboxes = boxes_tensor.tolist() if boxes_tensor is not None else []
+    labels = labels_tensor.tolist() if labels_tensor is not None else []
+
+    transformed = transform(image=image, bboxes=bboxes, labels=labels)
+
+    out_image = transformed["image"]
+    out_target = dict(target)
+
+    out_boxes = transformed.get("bboxes", [])
+    out_labels = transformed.get("labels", [])
+
+    out_target["labels"] = torch.as_tensor(out_labels, dtype=torch.long)
+    if out_boxes:
+        out_target["boxes"] = torch.as_tensor(out_boxes, dtype=torch.float32)
+    else:
+        out_target.pop("boxes", None)
+
+    return out_image, out_target
+
+
 class COCODataset(Dataset):
     """Loads processed underwater inspection images and COCO-format labels."""
 
@@ -82,7 +107,7 @@ class COCODataset(Dataset):
         target = self._build_target(anns, meta)
 
         if self.transforms:
-            image, target = self.transforms(image, target)
+            image, target = _apply_detection_transform(image, target, self.transforms)
 
         return image, target
 
@@ -182,7 +207,7 @@ class YOLODataset(Dataset):
             target["boxes"] = torch.as_tensor(boxes, dtype=torch.float32)
 
         if self.transforms:
-            image, target = self.transforms(image, target)
+            image, target = _apply_detection_transform(image, target, self.transforms)
 
         return image, target
 
