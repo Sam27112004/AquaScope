@@ -73,7 +73,7 @@ def main() -> None:
     dataset_format = getattr(cfg.datasets, "format", "coco").lower()
     class_names = list(getattr(cfg.datasets, "class_names", []))
 
-    logger.info("Task: %s | Model: %s | Epochs: %d | Batch: %d", task, model_slug, epochs, batch_size)
+    logger.info(f"Task: {task} | Model: {model_slug} | Epochs: {epochs} | Batch: {batch_size}")
 
     # --- Dataset ---
     train_transforms = build_augmentation_pipeline(image_size=cfg.datasets.image_size, mode="train")
@@ -129,7 +129,9 @@ def main() -> None:
     # --- Model ---
     model = ModelRegistry.build(task, model_slug, num_classes=num_classes, config=cfg)
     params = model.param_count()
-    logger.info("Model '%s' — %d trainable / %d total params.", model_slug, params["trainable"], params["total"])
+    logger.info(
+        f"Model '{model_slug}' — {params['trainable']} trainable / {params['total']} total params."
+    )
 
     # --- Optimiser & Scheduler ---
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=cfg.training.weight_decay)
@@ -162,7 +164,7 @@ def main() -> None:
         max_train_batches=args.max_train_batches,
         max_val_batches=args.max_val_batches,
     )
-    logger.info("Training complete. Best val_loss: %.4f", min(history.get("val_loss", [0])))
+    logger.info(f"Training complete. Best val_loss: {min(history.get('val_loss', [0])):.4f}")
 
 
 if __name__ == "__main__":

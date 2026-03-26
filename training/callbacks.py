@@ -100,10 +100,8 @@ class EarlyStopping(Callback):
             if self._wait >= self.patience:
                 self._stop = True
                 logger.info(
-                    "EarlyStopping: '%s' has not improved for %d epochs. Best: %.6f",
-                    self.monitor,
-                    self.patience,
-                    self._best,
+                    f"EarlyStopping: '{self.monitor}' has not improved for {self.patience} epochs. "
+                    f"Best: {self._best:.6f}"
                 )
 
     def should_stop(self) -> bool:
@@ -155,7 +153,7 @@ class CheckpointSaver(Callback):
                 self._best = value
                 best_path = self.checkpoint_dir / "best.pt"
                 self._model.save_checkpoint(best_path, metadata={"epoch": epoch, self.monitor: value})
-                logger.info("Saved best checkpoint → %s (%.6f)", best_path, value)
+                logger.info(f"Saved best checkpoint -> {best_path} ({value:.6f})")
 
             fmt_logs = dict(logs)
             fmt_logs.pop("epoch", None)

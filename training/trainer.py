@@ -103,16 +103,11 @@ class Trainer:
                 self.scheduler.step()
 
             self.callbacks.on_epoch_end(epoch, logs)
-            logger.info(
-                "Epoch %d/%d — train_loss: %.4f%s",
-                epoch,
-                epochs,
-                train_loss,
-                f"  val_loss: {logs.get('val_loss', 0):.4f}" if val_loader else "",
-            )
+            val_suffix = f"  val_loss: {logs.get('val_loss', 0):.4f}" if val_loader else ""
+            logger.info(f"Epoch {epoch}/{epochs} — train_loss: {train_loss:.4f}{val_suffix}")
 
             if self.callbacks.should_stop_early():
-                logger.info("Early stopping triggered at epoch %d.", epoch)
+                logger.info(f"Early stopping triggered at epoch {epoch}.")
                 break
 
         self.callbacks.on_train_end(history)
