@@ -12,6 +12,7 @@ training:
   batch_size: 16
   learning_rate: 0.001
   weight_decay: 0.0005
+  yolo_weights: yolov8n.yaml
   lr_scheduler: cosine    # cosine | step | plateau
   warmup_epochs: 3
   early_stopping_patience: 10

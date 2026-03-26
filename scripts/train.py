@@ -10,6 +10,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -34,6 +35,46 @@ _LOSS_MAP = {
     "segmentation": SegmentationLoss,
     "classification": ClassificationLoss,
 }
+
+
+def _train_with_ultralytics(cfg, epochs: int, batch_size: int, checkpoint_dir: str | Path) -> None:
+    """Train detection model with Ultralytics YOLOv8 on unified dataset.yaml."""
+    from ultralytics import YOLO
+
+    dataset_yaml = Path(getattr(cfg.datasets, "dataset_yaml", "datasets/processed/dataset.yaml"))
+    if not dataset_yaml.exists():
+        raise FileNotFoundError(f"YOLO dataset YAML not found: {dataset_yaml}")
+
+    model_init = getattr(cfg.training, "yolo_weights", "yolov8n.yaml")
+    configured_device = str(getattr(cfg, "device", "cpu"))
+    resolved_device = configured_device if (configured_device != "cuda" or torch.cuda.is_available()) else "cpu"
+    project_dir = Path(checkpoint_dir)
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ultralytics enables MLflow callback automatically if mlflow is installed.
+    # Ensure Windows paths use a valid URI scheme for MLflow store resolution.
+    mlruns_dir = (Path("runs") / "mlflow").resolve()
+    mlruns_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MLFLOW_TRACKING_URI", mlruns_dir.as_uri())
+
+    logger.info(f"Starting Ultralytics YOLO training with init='{model_init}'")
+    logger.info(f"Dataset YAML: {dataset_yaml}")
+    logger.info(f"Device: {resolved_device}")
+
+    model = YOLO(model_init)
+    model.train(
+        data=str(dataset_yaml),
+        epochs=epochs,
+        batch=batch_size,
+        imgsz=int(cfg.datasets.image_size[0]),
+        lr0=float(cfg.training.learning_rate),
+        weight_decay=float(cfg.training.weight_decay),
+        project=str(project_dir),
+        name="ultralytics_yolo",
+        exist_ok=True,
+        device=resolved_device,
+        workers=int(cfg.datasets.num_workers),
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,8 +113,25 @@ def main() -> None:
     checkpoint_dir = args.output_dir or cfg.tracking.checkpoint_dir
     dataset_format = getattr(cfg.datasets, "format", "coco").lower()
     class_names = list(getattr(cfg.datasets, "class_names", []))
+    use_ultralytics_yolo = (
+        task == "detection"
+        and model_slug == "yolo"
+        and dataset_format == "yolo"
+        and args.max_train_batches is None
+        and args.max_val_batches is None
+    )
 
     logger.info(f"Task: {task} | Model: {model_slug} | Epochs: {epochs} | Batch: {batch_size}")
+
+    if use_ultralytics_yolo:
+        try:
+            _train_with_ultralytics(cfg, epochs=epochs, batch_size=batch_size, checkpoint_dir=checkpoint_dir)
+            logger.info("Ultralytics YOLO training completed.")
+            return
+        except ImportError as exc:
+            raise RuntimeError(
+                "Ultralytics is required for real YOLO training. Install with: pip install ultralytics"
+            ) from exc
 
     # --- Dataset ---
     train_transforms = build_augmentation_pipeline(image_size=cfg.datasets.image_size, mode="train")
