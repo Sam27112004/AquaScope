@@ -100,3 +100,23 @@ class ClassMapper:
             {"id": class_id, "name": name, "supercategory": "object"}
             for class_id, name in cls.TARGET_CLASSES.items()
         ]
+
+    @classmethod
+    def coco_id_to_yolo_id(cls, coco_class_id: int) -> int:
+        """Convert 1-indexed COCO class ID to 0-indexed YOLO class ID."""
+        if coco_class_id not in cls.TARGET_CLASSES:
+            raise ValueError(f"Unknown COCO class ID: {coco_class_id}")
+        return coco_class_id - 1
+
+    @classmethod
+    def yolo_id_to_coco_id(cls, yolo_class_id: int) -> int:
+        """Convert 0-indexed YOLO class ID to 1-indexed COCO class ID."""
+        coco_class_id = yolo_class_id + 1
+        if coco_class_id not in cls.TARGET_CLASSES:
+            raise ValueError(f"Unknown YOLO class ID: {yolo_class_id}")
+        return coco_class_id
+
+    @classmethod
+    def get_yolo_class_names(cls) -> list[str]:
+        """Return YOLO class names ordered by 0-indexed class ID."""
+        return [cls.TARGET_CLASSES[i] for i in sorted(cls.TARGET_CLASSES.keys())]

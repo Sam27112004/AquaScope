@@ -9,6 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(max_value, value))
+
+
 def yolo_bbox_to_coco(
     center_x: float,
     center_y: float,
@@ -35,7 +39,40 @@ def yolo_bbox_to_coco(
     y = (center_y - height / 2) * img_height
     w = width * img_width
     h = height * img_height
+
+    # Clamp to image bounds to avoid tiny numeric spillovers from source labels.
+    x = _clamp(x, 0.0, float(img_width))
+    y = _clamp(y, 0.0, float(img_height))
+    w = _clamp(w, 0.0, float(img_width) - x)
+    h = _clamp(h, 0.0, float(img_height) - y)
     return (x, y, w, h)
+
+
+def coco_bbox_to_yolo(
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    img_width: int,
+    img_height: int,
+) -> tuple[float, float, float, float]:
+    """Convert COCO bbox (absolute x,y,w,h) to YOLO bbox (normalized cx,cy,w,h)."""
+    x = _clamp(x, 0.0, float(img_width))
+    y = _clamp(y, 0.0, float(img_height))
+    width = _clamp(width, 0.0, float(img_width) - x)
+    height = _clamp(height, 0.0, float(img_height) - y)
+
+    center_x = (x + width / 2.0) / img_width
+    center_y = (y + height / 2.0) / img_height
+    norm_w = width / img_width
+    norm_h = height / img_height
+
+    center_x = _clamp(center_x, 0.0, 1.0)
+    center_y = _clamp(center_y, 0.0, 1.0)
+    norm_w = _clamp(norm_w, 0.0, 1.0)
+    norm_h = _clamp(norm_h, 0.0, 1.0)
+
+    return (center_x, center_y, norm_w, norm_h)
 
 
 def yolo_obb_to_coco(
@@ -71,7 +108,12 @@ def yolo_obb_to_coco(
     y_min = min(ys)
     y_max = max(ys)
 
-    return (x_min, y_min, x_max - x_min, y_max - y_min)
+    x_min = _clamp(x_min, 0.0, float(img_width))
+    y_min = _clamp(y_min, 0.0, float(img_height))
+    x_max = _clamp(x_max, 0.0, float(img_width))
+    y_max = _clamp(y_max, 0.0, float(img_height))
+
+    return (x_min, y_min, max(0.0, x_max - x_min), max(0.0, y_max - y_min))
 
 
 def parse_yolo_label_file(

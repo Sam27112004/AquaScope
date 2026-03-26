@@ -1,378 +1,228 @@
 """
-Dataset processors for unification pipeline.
+Dataset processors for YOLO unification pipeline.
 
-Each processor handles one raw dataset format and converts to COCO.
+Each processor handles one raw dataset format and emits YOLO labels.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 from PIL import Image
 
 from datasets.class_mapper import ClassMapper
 from datasets.format_converters import (
+    coco_bbox_to_yolo,
     parse_yolo_label_file,
-    yolo_bbox_to_coco,
     yolo_obb_to_coco,
 )
+
+
+class UnifiedSample(TypedDict):
+    """One unified sample ready to write into processed images/labels."""
+
+    source_image_path: Path
+    target_file_name: str
+    yolo_lines: list[str]
 
 
 class BaseDatasetProcessor:
     """Base class for dataset-specific processors."""
 
     def __init__(self, source_dir: Path, dataset_name: str, logger):
-        """Initialize processor.
-
-        Args:
-            source_dir: Path to dataset's root directory
-            dataset_name: Short name for prefixing filenames
-            logger: Logger instance
-        """
         self.source_dir = Path(source_dir)
         self.dataset_name = dataset_name
         self.logger = logger
 
-    def process_split(
-        self, split: str, start_image_id: int, start_ann_id: int
-    ) -> dict:
-        """Process one split and return COCO-format data.
-
-        Args:
-            split: Split name ("train", "val", or "test")
-            start_image_id: Starting image ID for this processor
-            start_ann_id: Starting annotation ID for this processor
-
-        Returns:
-            Dictionary with:
-                - images: List of COCO image dicts
-                - annotations: List of COCO annotation dicts
-                - next_image_id: Next available image ID
-                - next_ann_id: Next available annotation ID
-        """
+    def process_split(self, split: str) -> list[UnifiedSample]:
+        """Process one split and return unified YOLO-ready samples."""
         raise NotImplementedError
 
 
 class TrashCANProcessor(BaseDatasetProcessor):
-    """Process TrashCAN COCO JSON dataset."""
+    """Process TrashCAN COCO JSON dataset into YOLO labels."""
 
-    def __init__(self, source_dir: Path, dataset_name: str, logger):
-        super().__init__(source_dir, dataset_name, logger)
-
-    def process_split(
-        self, split: str, start_image_id: int, start_ann_id: int
-    ) -> dict:
-        """Load TrashCAN COCO JSON, remap classes, prefix filenames."""
-
-        # Map split name to file name
+    def process_split(self, split: str) -> list[UnifiedSample]:
         json_file = self.source_dir / f"instances_{split}_trashcan.json"
-
         if not json_file.exists():
             raise FileNotFoundError(f"TrashCAN {split} file not found: {json_file}")
 
         self.logger.info(f"  Loading {json_file.name}...")
-
-        # Load COCO JSON
         with open(json_file, "r", encoding="utf-8") as f:
             coco_data = json.load(f)
 
-        # Build category mapping: original_id → target_id
-        cat_map = {}
+        cat_map: dict[int, int | None] = {}
         for cat in coco_data.get("categories", []):
-            target_id = ClassMapper.map_trashcan_class(cat["name"])
-            cat_map[cat["id"]] = target_id  # Can be None for excluded classes
+            cat_map[cat["id"]] = ClassMapper.map_trashcan_class(cat["name"])
 
-        # Build image ID mapping: original_id → new_id
-        image_id_map = {}
-        images = []
-        next_image_id = start_image_id
-
-        for img in coco_data.get("images", []):
-            original_id = img["id"]
-            new_id = next_image_id
-
-            image_id_map[original_id] = new_id
-
-            # Create new image dict with prefixed filename
-            new_img = {
-                "id": new_id,
-                "file_name": f"{self.dataset_name}_{img['file_name']}",
-                "width": img["width"],
-                "height": img["height"],
-                "source_dataset": self.dataset_name,
-            }
-            images.append(new_img)
-            next_image_id += 1
-
-        # Process annotations
-        annotations = []
-        next_ann_id = start_ann_id
-
+        ann_by_image: dict[int, list[dict]] = {}
         for ann in coco_data.get("annotations", []):
-            # Map category
-            new_cat_id = cat_map.get(ann["category_id"])
+            ann_by_image.setdefault(ann["image_id"], []).append(ann)
 
-            # Skip if class is excluded (e.g., rov)
-            if new_cat_id is None:
-                continue
+        samples: list[UnifiedSample] = []
+        for img in coco_data.get("images", []):
+            image_path = self.source_dir / split / img["file_name"]
+            target_name = f"{self.dataset_name}_{img['file_name']}"
 
-            # Skip if image was not processed
-            new_image_id = image_id_map.get(ann["image_id"])
-            if new_image_id is None:
-                continue
+            yolo_lines: list[str] = []
+            for ann in ann_by_image.get(img["id"], []):
+                coco_class_id = cat_map.get(ann["category_id"])
+                if coco_class_id is None:
+                    continue
 
-            # Create new annotation
-            bbox = ann["bbox"]
-            new_ann = {
-                "id": next_ann_id,
-                "image_id": new_image_id,
-                "category_id": new_cat_id,
-                "bbox": bbox,
-                "area": ann.get("area", bbox[2] * bbox[3]),
-                "iscrowd": 0,
-            }
+                x, y, w, h = ann["bbox"]
+                cx, cy, nw, nh = coco_bbox_to_yolo(
+                    x=x,
+                    y=y,
+                    width=w,
+                    height=h,
+                    img_width=img["width"],
+                    img_height=img["height"],
+                )
 
-            # Preserve segmentation if present
-            if "segmentation" in ann:
-                new_ann["segmentation"] = ann["segmentation"]
+                if nw <= 0 or nh <= 0:
+                    continue
 
-            annotations.append(new_ann)
-            next_ann_id += 1
+                yolo_class = ClassMapper.coco_id_to_yolo_id(coco_class_id)
+                yolo_lines.append(
+                    f"{yolo_class} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}"
+                )
 
-        self.logger.info(
-            f"    Processed {len(images)} images, {len(annotations)} annotations"
-        )
+            samples.append(
+                {
+                    "source_image_path": image_path,
+                    "target_file_name": target_name,
+                    "yolo_lines": yolo_lines,
+                }
+            )
 
-        return {
-            "images": images,
-            "annotations": annotations,
-            "next_image_id": next_image_id,
-            "next_ann_id": next_ann_id,
-        }
+        self.logger.info(f"    Processed {len(samples)} images")
+        return samples
 
 
 class YOLOBBoxProcessor(BaseDatasetProcessor):
-    """Process YOLO standard bounding box dataset."""
+    """Process standard YOLO bbox dataset and remap class IDs."""
 
     def __init__(self, source_dir: Path, dataset_name: str, class_name: str, logger):
-        """Initialize YOLO bbox processor.
-
-        Args:
-            source_dir: Path to YOLO dataset root (contains train/, valid/, test/)
-            dataset_name: Name for prefixing filenames
-            class_name: Original class name to map (e.g., "crack")
-            logger: Logger instance
-        """
         super().__init__(source_dir, dataset_name, logger)
         self.class_name = class_name
 
-    def process_split(
-        self, split: str, start_image_id: int, start_ann_id: int
-    ) -> dict:
-        """Convert YOLO bbox format to COCO format."""
-
-        # YOLO uses "valid" instead of "val"
+    def process_split(self, split: str) -> list[UnifiedSample]:
         split_dir = "valid" if split == "val" else split
         images_dir = self.source_dir / split_dir / "images"
         labels_dir = self.source_dir / split_dir / "labels"
 
         if not images_dir.exists():
-            raise FileNotFoundError(
-                f"{self.dataset_name} {split} not found: {images_dir}"
-            )
+            raise FileNotFoundError(f"{self.dataset_name} {split} not found: {images_dir}")
 
-        self.logger.info(f"  Processing {images_dir}...")
-
-        # Map class
-        target_class_id = ClassMapper.map_simple_class(self.class_name)
-        if target_class_id is None:
+        coco_class_id = ClassMapper.map_simple_class(self.class_name)
+        if coco_class_id is None:
             self.logger.warning(f"Class {self.class_name} unmapped, skipping dataset")
-            return {
-                "images": [],
-                "annotations": [],
-                "next_image_id": start_image_id,
-                "next_ann_id": start_ann_id,
-            }
+            return []
+        yolo_class = ClassMapper.coco_id_to_yolo_id(coco_class_id)
 
-        images = []
-        annotations = []
-        next_image_id = start_image_id
-        next_ann_id = start_ann_id
-
-        # Process each image
+        samples: list[UnifiedSample] = []
         for img_path in sorted(images_dir.glob("*")):
             if img_path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
                 continue
 
-            # Get image dimensions
-            try:
-                with Image.open(img_path) as im:
-                    img_width, img_height = im.size
-            except Exception as e:
-                self.logger.warning(f"Cannot open image {img_path}: {e}")
-                continue
-
-            # Create image entry
-            new_filename = f"{self.dataset_name}_{img_path.name}"
-            images.append(
-                {
-                    "id": next_image_id,
-                    "file_name": new_filename,
-                    "width": img_width,
-                    "height": img_height,
-                    "source_dataset": self.dataset_name,
-                }
-            )
-
-            # Parse label file
             label_path = labels_dir / f"{img_path.stem}.txt"
             labels = parse_yolo_label_file(label_path, format_type="bbox")
 
-            # Convert each bbox to COCO format
+            yolo_lines: list[str] = []
             for label in labels:
-                class_id, center_x, center_y, width, height = label
+                _, cx, cy, w, h = label
+                if w <= 0 or h <= 0:
+                    continue
+                yolo_lines.append(f"{yolo_class} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
 
-                # Convert to COCO bbox
-                x, y, w, h = yolo_bbox_to_coco(
-                    center_x, center_y, width, height, img_width, img_height
-                )
+            samples.append(
+                {
+                    "source_image_path": img_path,
+                    "target_file_name": f"{self.dataset_name}_{img_path.name}",
+                    "yolo_lines": yolo_lines,
+                }
+            )
 
-                # Create annotation
-                annotations.append(
-                    {
-                        "id": next_ann_id,
-                        "image_id": next_image_id,
-                        "category_id": target_class_id,
-                        "bbox": [x, y, w, h],
-                        "area": w * h,
-                        "iscrowd": 0,
-                    }
-                )
-                next_ann_id += 1
-
-            next_image_id += 1
-
-        self.logger.info(
-            f"    Processed {len(images)} images, {len(annotations)} annotations"
-        )
-
-        return {
-            "images": images,
-            "annotations": annotations,
-            "next_image_id": next_image_id,
-            "next_ann_id": next_ann_id,
-        }
+        self.logger.info(f"    Processed {len(samples)} images")
+        return samples
 
 
 class YOLOOBBProcessor(BaseDatasetProcessor):
-    """Process YOLO Oriented Bounding Box dataset."""
+    """Process YOLO OBB dataset and convert to axis-aligned YOLO bbox labels."""
 
     def __init__(self, source_dir: Path, dataset_name: str, class_name: str, logger):
-        """Initialize YOLO OBB processor.
-
-        Args:
-            source_dir: Path to YOLO dataset root (contains train/, valid/, test/)
-            dataset_name: Name for prefixing filenames
-            class_name: Original class name to map (e.g., "trash_plastic")
-            logger: Logger instance
-        """
         super().__init__(source_dir, dataset_name, logger)
         self.class_name = class_name
 
-    def process_split(
-        self, split: str, start_image_id: int, start_ann_id: int
-    ) -> dict:
-        """Convert YOLO OBB format to COCO bbox format."""
-
-        # YOLO uses "valid" instead of "val"
+    def process_split(self, split: str) -> list[UnifiedSample]:
         split_dir = "valid" if split == "val" else split
         images_dir = self.source_dir / split_dir / "images"
         labels_dir = self.source_dir / split_dir / "labels"
 
         if not images_dir.exists():
-            raise FileNotFoundError(
-                f"{self.dataset_name} {split} not found: {images_dir}"
-            )
+            raise FileNotFoundError(f"{self.dataset_name} {split} not found: {images_dir}")
 
-        self.logger.info(f"  Processing {images_dir}...")
-
-        # Map class
-        target_class_id = ClassMapper.map_simple_class(self.class_name)
-        if target_class_id is None:
+        coco_class_id = ClassMapper.map_simple_class(self.class_name)
+        if coco_class_id is None:
             self.logger.warning(f"Class {self.class_name} unmapped, skipping dataset")
-            return {
-                "images": [],
-                "annotations": [],
-                "next_image_id": start_image_id,
-                "next_ann_id": start_ann_id,
-            }
+            return []
+        yolo_class = ClassMapper.coco_id_to_yolo_id(coco_class_id)
 
-        images = []
-        annotations = []
-        next_image_id = start_image_id
-        next_ann_id = start_ann_id
-
-        # Process each image
+        samples: list[UnifiedSample] = []
         for img_path in sorted(images_dir.glob("*")):
             if img_path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
                 continue
 
-            # Get image dimensions
-            try:
-                with Image.open(img_path) as im:
-                    img_width, img_height = im.size
-            except Exception as e:
-                self.logger.warning(f"Cannot open image {img_path}: {e}")
-                continue
+            # Image dimensions are required to project normalized OBB points.
+            with Image.open(img_path) as img:
+                img_width, img_height = img.size
 
-            # Create image entry
-            new_filename = f"{self.dataset_name}_{img_path.name}"
-            images.append(
-                {
-                    "id": next_image_id,
-                    "file_name": new_filename,
-                    "width": img_width,
-                    "height": img_height,
-                    "source_dataset": self.dataset_name,
-                }
-            )
-
-            # Parse label file (OBB format)
             label_path = labels_dir / f"{img_path.stem}.txt"
             labels = parse_yolo_label_file(label_path, format_type="obb")
 
-            # Convert each OBB to COCO bbox
+            yolo_lines: list[str] = []
             for label in labels:
-                class_id, x1, y1, x2, y2, x3, y3, x4, y4 = label
-
-                # Convert to axis-aligned bbox
+                _, x1, y1, x2, y2, x3, y3, x4, y4 = label
                 x, y, w, h = yolo_obb_to_coco(
-                    x1, y1, x2, y2, x3, y3, x4, y4, img_width, img_height
+                    x1=x1,
+                    y1=y1,
+                    x2=x2,
+                    y2=y2,
+                    x3=x3,
+                    y3=y3,
+                    x4=x4,
+                    y4=y4,
+                    img_width=img_width,
+                    img_height=img_height,
+                )
+                if w <= 0 or h <= 0:
+                    continue
+
+                cx, cy, nw, nh = coco_bbox_to_yolo(
+                    x=x,
+                    y=y,
+                    width=w,
+                    height=h,
+                    img_width=img_width,
+                    img_height=img_height,
+                )
+                if nw <= 0 or nh <= 0:
+                    continue
+
+                yolo_lines.append(
+                    f"{yolo_class} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}"
                 )
 
-                # Create annotation
-                annotations.append(
-                    {
-                        "id": next_ann_id,
-                        "image_id": next_image_id,
-                        "category_id": target_class_id,
-                        "bbox": [x, y, w, h],
-                        "area": w * h,
-                        "iscrowd": 0,
-                    }
-                )
-                next_ann_id += 1
+            samples.append(
+                {
+                    "source_image_path": img_path,
+                    "target_file_name": f"{self.dataset_name}_{img_path.name}",
+                    "yolo_lines": yolo_lines,
+                }
+            )
 
-            next_image_id += 1
-
-        self.logger.info(
-            f"    Processed {len(images)} images, {len(annotations)} annotations"
-        )
-
-        return {
-            "images": images,
-            "annotations": annotations,
-            "next_image_id": next_image_id,
-            "next_ann_id": next_ann_id,
-        }
+        self.logger.info(f"    Processed {len(samples)} images")
+        return samples

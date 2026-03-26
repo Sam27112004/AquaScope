@@ -9,6 +9,83 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def validate_yolo_split(
+    images_dir: Path,
+    labels_dir: Path,
+    num_classes: int,
+) -> list[str]:
+    """Validate one YOLO split directory pair and return errors."""
+    errors: list[str] = []
+    images_dir = Path(images_dir)
+    labels_dir = Path(labels_dir)
+
+    image_paths = sorted(
+        p for p in images_dir.glob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
+
+    for image_path in image_paths:
+        label_path = labels_dir / f"{image_path.stem}.txt"
+        if not label_path.exists():
+            errors.append(f"Missing label file for image: {image_path.name}")
+            continue
+
+        lines = label_path.read_text(encoding="utf-8").splitlines()
+        for line_idx, line in enumerate(lines, start=1):
+            parts = line.strip().split()
+            if len(parts) != 5:
+                errors.append(f"{label_path.name}:{line_idx} has {len(parts)} values (expected 5)")
+                continue
+
+            try:
+                class_id = int(float(parts[0]))
+                cx = float(parts[1])
+                cy = float(parts[2])
+                w = float(parts[3])
+                h = float(parts[4])
+            except ValueError:
+                errors.append(f"{label_path.name}:{line_idx} contains non-numeric values")
+                continue
+
+            if class_id < 0 or class_id >= num_classes:
+                errors.append(f"{label_path.name}:{line_idx} invalid class id {class_id}")
+
+            if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
+                errors.append(f"{label_path.name}:{line_idx} center out of range")
+            if not (0.0 < w <= 1.0 and 0.0 < h <= 1.0):
+                errors.append(f"{label_path.name}:{line_idx} width/height out of range")
+
+    return errors
+
+
+def print_yolo_split_statistics(images_dir: Path, labels_dir: Path, split: str, logger) -> None:
+    """Print summary statistics for one YOLO split."""
+    images_dir = Path(images_dir)
+    labels_dir = Path(labels_dir)
+
+    image_paths = sorted(
+        p for p in images_dir.glob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
+    label_paths = sorted(labels_dir.glob("*.txt"))
+
+    total_boxes = 0
+    empty_labels = 0
+    for label_path in label_paths:
+        lines = [line for line in label_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not lines:
+            empty_labels += 1
+        total_boxes += len(lines)
+
+    logger.info(f"\n{'=' * 60}")
+    logger.info(f"Statistics for {split.upper()}")
+    logger.info(f"{'=' * 60}")
+    logger.info(f"Total images: {len(image_paths):,}")
+    logger.info(f"Total label files: {len(label_paths):,}")
+    logger.info(f"Total objects: {total_boxes:,}")
+    logger.info(f"Images without objects: {empty_labels:,}")
+    if image_paths:
+        logger.info(f"Avg objects per image: {total_boxes / len(image_paths):.2f}")
+
+
 def validate_coco_format(coco_data: dict) -> list[str]:
     """Validate COCO JSON structure and return list of errors.
 

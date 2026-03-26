@@ -1,7 +1,9 @@
 """
-Dataset merger for unification pipeline.
+Dataset merger for YOLO unification pipeline.
 
-Orchestrates processing and merging of multiple raw datasets.
+Orchestrates processing and merging of multiple raw datasets into:
+  datasets/processed/images/{train,val,test}
+  datasets/processed/labels/{train,val,test}
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ import json
 import shutil
 from pathlib import Path
 
-from utils.file_utils import ensure_dir
+import yaml
 
 from datasets.class_mapper import ClassMapper
 from datasets.dataset_processors import (
@@ -18,32 +20,19 @@ from datasets.dataset_processors import (
     YOLOBBoxProcessor,
     YOLOOBBProcessor,
 )
+from utils.file_utils import clean_dir, ensure_dir
 
 
 class DatasetMerger:
-    """Merges multiple raw datasets into unified COCO format."""
+    """Merges multiple raw datasets into unified YOLO format."""
 
-    def __init__(
-        self,
-        raw_dir: Path,
-        output_images_dir: Path,
-        output_annotations_dir: Path,
-        logger,
-    ):
-        """Initialize merger.
-
-        Args:
-            raw_dir: Directory containing raw datasets
-            output_images_dir: Output directory for unified images
-            output_annotations_dir: Output directory for COCO JSON files
-            logger: Logger instance
-        """
+    def __init__(self, raw_dir: Path, output_processed_dir: Path, logger):
         self.raw_dir = Path(raw_dir)
-        self.output_images_dir = Path(output_images_dir)
-        self.output_annotations_dir = Path(output_annotations_dir)
+        self.output_processed_dir = Path(output_processed_dir)
+        self.images_root = self.output_processed_dir / "images"
+        self.labels_root = self.output_processed_dir / "labels"
         self.logger = logger
 
-        # Initialize processors for all datasets
         self.processors = [
             TrashCANProcessor(
                 source_dir=self.raw_dir / "trashcan" / "dataset" / "instance_version",
@@ -70,128 +59,104 @@ class DatasetMerger:
             ),
         ]
 
-    def merge_split(self, split: str) -> Path:
-        """Merge all datasets for one split (train/val/test).
+    def merge_split(self, split: str) -> dict:
+        """Merge all datasets for one split and write YOLO images/labels."""
+        images_dir = ensure_dir(self.images_root / split)
+        labels_dir = ensure_dir(self.labels_root / split)
 
-        Args:
-            split: Split name ("train", "val", or "test")
+        per_dataset_images: dict[str, int] = {}
+        num_images = 0
+        num_labels = 0
 
-        Returns:
-            Path to output COCO JSON file
-        """
-        # Initialize COCO structure
-        merged_coco = {
-            "info": {
-                "description": "AquaScope Unified Underwater Inspection Dataset",
-                "version": "1.0",
-                "year": 2026,
-                "contributor": "AquaScope-AI",
-                "date_created": "2026-03-23",
-            },
-            "licenses": [],
-            "images": [],
-            "annotations": [],
-            "categories": ClassMapper.get_coco_categories(),
-        }
-
-        next_image_id = 1
-        next_ann_id = 1
-
-        # Process each dataset
         for processor in self.processors:
             self.logger.info(f"Processing {processor.dataset_name} ({split})...")
-
             try:
-                result = processor.process_split(split, next_image_id, next_ann_id)
+                samples = processor.process_split(split)
             except FileNotFoundError:
-                # Some datasets don't have all splits (e.g., TrashCAN has no test)
                 self.logger.warning(
                     f"  Split '{split}' not found for {processor.dataset_name}, skipping"
                 )
                 continue
 
-            # Merge images and annotations
-            merged_coco["images"].extend(result["images"])
-            merged_coco["annotations"].extend(result["annotations"])
+            written_for_dataset = 0
+            for sample in samples:
+                source_image_path = sample["source_image_path"]
+                target_name = sample["target_file_name"]
 
-            # Copy images
-            self._copy_images(processor, split, result["images"])
-
-            # Update counters
-            next_image_id = result["next_image_id"]
-            next_ann_id = result["next_ann_id"]
-
-        # Write merged JSON
-        output_path = self.output_annotations_dir / f"{split}.json"
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(merged_coco, f, indent=2)
-
-        self.logger.info(
-            f"{split.upper()}: {len(merged_coco['images'])} images, "
-            f"{len(merged_coco['annotations'])} annotations → {output_path.name}"
-        )
-
-        return output_path
-
-    def _copy_images(
-        self, processor, split: str, images: list[dict]
-    ) -> None:
-        """Copy images from source to unified output directory.
-
-        Args:
-            processor: Processor instance
-            split: Split name
-            images: List of image dicts with prefixed filenames
-        """
-        for img_dict in images:
-            # Determine source image path based on dataset format
-            if processor.dataset_name == "trashcan":
-                # TrashCAN COCO format: images in split subdirectory
-                # Strip prefix to get original filename
-                original_name = img_dict["file_name"].replace(
-                    f"{processor.dataset_name}_", "", 1
-                )
-                src_path = processor.source_dir / split / original_name
-            else:
-                # YOLO format: images in {split}/images/
-                original_name = img_dict["file_name"].replace(
-                    f"{processor.dataset_name}_", "", 1
-                )
-                split_dir = "valid" if split == "val" else split
-                src_path = processor.source_dir / split_dir / "images" / original_name
-
-            dst_path = self.output_images_dir / img_dict["file_name"]
-
-            # Copy if not already present
-            if not dst_path.exists():
-                if not src_path.exists():
-                    self.logger.warning(f"  Source image not found: {src_path}")
+                if not source_image_path.exists():
+                    self.logger.warning(f"  Source image not found: {source_image_path}")
                     continue
-                try:
-                    shutil.copy2(src_path, dst_path)
-                except Exception as e:
-                    self.logger.error(f"  Failed to copy {src_path}: {e}")
 
-    def merge_all(self) -> dict[str, Path]:
-        """Merge all splits (train, val, test).
+                dst_image_path = images_dir / target_name
+                dst_label_path = labels_dir / f"{Path(target_name).stem}.txt"
 
-        Returns:
-            Dictionary mapping split names to output JSON paths
-        """
-        # Ensure output directories exist
-        ensure_dir(self.output_images_dir)
-        ensure_dir(self.output_annotations_dir)
+                if not dst_image_path.exists():
+                    shutil.copy2(source_image_path, dst_image_path)
 
-        results = {}
+                # Always write a label file, even if empty, to preserve sample parity.
+                label_text = "\n".join(sample["yolo_lines"])
+                if label_text:
+                    label_text += "\n"
+                dst_label_path.write_text(label_text, encoding="utf-8")
+
+                num_images += 1
+                num_labels += len(sample["yolo_lines"])
+                written_for_dataset += 1
+
+            per_dataset_images[processor.dataset_name] = (
+                per_dataset_images.get(processor.dataset_name, 0) + written_for_dataset
+            )
+
+        self.logger.info(f"{split.upper()}: {num_images} images, {num_labels} object labels")
+
+        return {
+            "split": split,
+            "images": num_images,
+            "labels": num_labels,
+            "images_dir": str(images_dir),
+            "labels_dir": str(labels_dir),
+            "per_dataset_images": per_dataset_images,
+        }
+
+    def write_dataset_yaml(self) -> Path:
+        """Write YOLO dataset.yaml describing split paths and class names."""
+        dataset_yaml_path = self.output_processed_dir / "dataset.yaml"
+        yolo_data = {
+            "path": str(self.output_processed_dir.resolve()),
+            "train": "images/train",
+            "val": "images/val",
+            "test": "images/test",
+            "names": {idx: name for idx, name in enumerate(ClassMapper.get_yolo_class_names())},
+        }
+        with open(dataset_yaml_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(yolo_data, f, sort_keys=False)
+        return dataset_yaml_path
+
+    def merge_all(self, clean_output: bool = True) -> dict[str, dict]:
+        """Merge train/val/test into unified YOLO format and return summary stats."""
+        ensure_dir(self.output_processed_dir)
+        ensure_dir(self.images_root)
+        ensure_dir(self.labels_root)
+
+        if clean_output:
+            clean_dir(self.images_root)
+            clean_dir(self.labels_root)
+            ensure_dir(self.images_root)
+            ensure_dir(self.labels_root)
+
+        results: dict[str, dict] = {}
         for split in ["train", "val", "test"]:
             self.logger.info(f"\n{'=' * 60}")
             self.logger.info(f"Merging {split.upper()} split")
-            self.logger.info("=" * 60)
+            self.logger.info(f"{'=' * 60}")
+            results[split] = self.merge_split(split)
 
-            try:
-                results[split] = self.merge_split(split)
-            except Exception as e:
-                self.logger.error(f"Failed to merge {split}: {e}", exc_info=True)
-                raise
+        dataset_yaml_path = self.write_dataset_yaml()
 
+        summary_path = self.output_processed_dir / "summary.json"
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+
+        self.logger.info(f"\nWrote YOLO dataset config: {dataset_yaml_path}")
+        self.logger.info(f"Wrote unification summary: {summary_path}")
         return results

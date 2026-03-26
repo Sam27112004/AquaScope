@@ -26,7 +26,10 @@ datasets:
   root: datasets/
   raw_dir: datasets/raw/
   processed_dir: datasets/processed/
-  annotations_dir: datasets/annotations/
+  annotations_dir: datasets/processed/labels/
+  format: yolo
+  dataset_yaml: datasets/processed/dataset.yaml
+  class_names: [trash, plastic, fishing_net, marine_growth, surface_damage]
   image_size: [640, 640]
   num_workers: 4
 

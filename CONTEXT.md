@@ -26,7 +26,7 @@ It will later be consumed by a separate web app (React + Express). Do not build 
 | ML Framework | YOLOv8 (Ultralytics)              |
 | API Server   | FastAPI                           |
 | Video Tools  | OpenCV                            |
-| Data Format  | COCO JSON (unified) + YOLO (.txt + .yaml)  |
+| Data Format  | YOLO (.txt + dataset.yaml) canonical; optional COCO for compatibility |
 | Datasets     | 4 unified: TrashCAN, Underwater Trash, Underwater Crack, Concrete Crack |
 
 ---
@@ -89,7 +89,7 @@ Target classes (unified from 4 source datasets):
 | 5     | FastAPI endpoints                         | ⬜ TODO   |
 | 6     | Testing + output validation               | ⬜ TODO   |
 
-> **Phase 2 Complete!** Unified dataset ready: 20,755 images → `datasets/processed/` (train.json, val.json, test.json)
+> **Phase 2 Complete!** Unified dataset ready: 20,755 images → `datasets/processed/images/{train,val,test}` and `datasets/processed/labels/{train,val,test}`
 > **Next:** Phase 3 - Model training with YOLOv8. Ready to configure training pipeline.
 > **Update status as you go. Always tell Claude which phase you're in.**
 
