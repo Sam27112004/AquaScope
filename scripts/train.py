@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=None, help="Override config model slug.")
     parser.add_argument("--task", default=None, help="Override task (detection/segmentation/classification).")
     parser.add_argument("--output-dir", default=None, help="Override checkpoint directory.")
+    parser.add_argument("--max-train-batches", type=int, default=None, help="Limit train batches per epoch (smoke runs).")
+    parser.add_argument("--max-val-batches", type=int, default=None, help="Limit val batches per epoch (smoke runs).")
     return parser.parse_args()
 
 
@@ -153,7 +155,13 @@ def main() -> None:
         config=cfg,
         callbacks=callbacks,
     )
-    history = trainer.fit(train_loader, val_loader, epochs=epochs)
+    history = trainer.fit(
+        train_loader,
+        val_loader,
+        epochs=epochs,
+        max_train_batches=args.max_train_batches,
+        max_val_batches=args.max_val_batches,
+    )
     logger.info("Training complete. Best val_loss: %.4f", min(history.get("val_loss", [0])))
 
 

@@ -71,6 +71,8 @@ class Trainer:
         train_loader: DataLoader,
         val_loader: DataLoader | None = None,
         epochs: int = 10,
+        max_train_batches: int | None = None,
+        max_val_batches: int | None = None,
     ) -> dict[str, list[float]]:
         """Run the full training loop.
 
@@ -82,13 +84,18 @@ class Trainer:
 
         for epoch in range(1, epochs + 1):
             self.callbacks.on_epoch_begin(epoch, {})
-            train_loss = self._train_epoch(train_loader, epoch, epochs)
+            train_loss = self._train_epoch(
+                train_loader,
+                epoch,
+                epochs,
+                max_batches=max_train_batches,
+            )
             history["train_loss"].append(train_loss)
 
             logs: dict = {"epoch": epoch, "train_loss": train_loss}
 
             if val_loader is not None:
-                val_loss = self._val_epoch(val_loader)
+                val_loss = self._val_epoch(val_loader, max_batches=max_val_batches)
                 history["val_loss"].append(val_loss)
                 logs["val_loss"] = val_loss
 
@@ -115,11 +122,21 @@ class Trainer:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _train_epoch(self, loader: DataLoader, epoch: int, total_epochs: int) -> float:
+    def _train_epoch(
+        self,
+        loader: DataLoader,
+        epoch: int,
+        total_epochs: int,
+        max_batches: int | None = None,
+    ) -> float:
         self.model.train()
         running_loss = 0.0
+        processed_batches = 0
 
         for batch_idx, (images, targets) in enumerate(loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+
             images = self._prepare_images(images)
             targets = self._to_device(targets)
 
@@ -138,15 +155,20 @@ class Trainer:
             self.callbacks.on_batch_end(
                 batch_idx, {"loss": loss.item(), "epoch": epoch, "total_epochs": total_epochs}
             )
+            processed_batches += 1
 
-        return running_loss / max(len(loader), 1)
+        return running_loss / max(processed_batches, 1)
 
     @torch.no_grad()
-    def _val_epoch(self, loader: DataLoader) -> float:
+    def _val_epoch(self, loader: DataLoader, max_batches: int | None = None) -> float:
         self.model.eval()
         running_loss = 0.0
+        processed_batches = 0
 
-        for images, targets in loader:
+        for batch_idx, (images, targets) in enumerate(loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+
             images = self._prepare_images(images)
             targets = self._to_device(targets)
             with torch.amp.autocast(
@@ -155,8 +177,9 @@ class Trainer:
                 predictions = self.model(images)
                 loss = self.loss_fn(predictions, targets)
             running_loss += loss.item()
+            processed_batches += 1
 
-        return running_loss / max(len(loader), 1)
+        return running_loss / max(processed_batches, 1)
 
     def _to_device(self, data: Any) -> Any:
         if isinstance(data, torch.Tensor):

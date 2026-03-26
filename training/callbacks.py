@@ -157,6 +157,8 @@ class CheckpointSaver(Callback):
                 self._model.save_checkpoint(best_path, metadata={"epoch": epoch, self.monitor: value})
                 logger.info("Saved best checkpoint → %s (%.6f)", best_path, value)
 
-            fname = self.filename_template.format(epoch=epoch, **logs)
+            fmt_logs = dict(logs)
+            fmt_logs.pop("epoch", None)
+            fname = self.filename_template.format(epoch=epoch, **fmt_logs)
             path = self.checkpoint_dir / fname
             self._model.save_checkpoint(path, metadata={"epoch": epoch})

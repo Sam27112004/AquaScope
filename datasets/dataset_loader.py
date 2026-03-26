@@ -50,10 +50,28 @@ def _apply_detection_transform(image, target: dict, transform):
     boxes_tensor = target.get("boxes")
     labels_tensor = target.get("labels")
 
+    img_h, img_w = image.shape[:2]
+
     bboxes = boxes_tensor.tolist() if boxes_tensor is not None else []
     labels = labels_tensor.tolist() if labels_tensor is not None else []
 
-    transformed = transform(image=image, bboxes=bboxes, labels=labels)
+    sanitized_bboxes: list[list[float]] = []
+    sanitized_labels: list[int] = []
+    for box, label in zip(bboxes, labels):
+        x1, y1, x2, y2 = [float(v) for v in box]
+
+        x1 = max(0.0, min(x1, float(img_w)))
+        y1 = max(0.0, min(y1, float(img_h)))
+        x2 = max(0.0, min(x2, float(img_w)))
+        y2 = max(0.0, min(y2, float(img_h)))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        sanitized_bboxes.append([x1, y1, x2, y2])
+        sanitized_labels.append(int(label))
+
+    transformed = transform(image=image, bboxes=sanitized_bboxes, labels=sanitized_labels)
 
     out_image = transformed["image"]
     out_target = dict(target)
