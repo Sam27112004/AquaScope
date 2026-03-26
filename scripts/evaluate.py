@@ -41,6 +41,8 @@ def main() -> None:
 
     task: str = cfg.task
     model_slug: str = cfg.model
+    dataset_format = getattr(cfg.datasets, "format", "coco").lower()
+    class_names = list(getattr(cfg.datasets, "class_names", []))
 
     # Load checkpoint metadata to determine num_classes.
     checkpoint_path = Path(args.checkpoint)
@@ -56,14 +58,27 @@ def main() -> None:
     logger.info("Loaded checkpoint '%s' (task=%s, model=%s, classes=%d).", checkpoint_path, task, model_slug, num_classes)
 
     # Dataset.
-    loader = build_dataloader(
-        annotations_file=Path(cfg.datasets.annotations_dir) / f"{args.split}.json",
-        images_dir=Path(cfg.datasets.processed_dir) / "images",
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=cfg.datasets.num_workers,
-        task=task,
-    )
+    if dataset_format == "yolo":
+        loader = build_dataloader(
+            annotations_file=None,
+            images_dir=Path(cfg.datasets.processed_dir) / "images" / args.split,
+            labels_dir=Path(cfg.datasets.processed_dir) / "labels" / args.split,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=cfg.datasets.num_workers,
+            task=task,
+            split=args.split,
+            class_names=class_names,
+        )
+    else:
+        loader = build_dataloader(
+            annotations_file=Path(cfg.datasets.annotations_dir) / f"{args.split}.json",
+            images_dir=Path(cfg.datasets.processed_dir) / "images",
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=cfg.datasets.num_workers,
+            task=task,
+        )
 
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     model.to(device)

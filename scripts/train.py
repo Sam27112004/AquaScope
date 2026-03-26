@@ -68,6 +68,8 @@ def main() -> None:
     batch_size: int = cfg.training.batch_size
     lr: float = cfg.training.learning_rate
     checkpoint_dir = args.output_dir or cfg.tracking.checkpoint_dir
+    dataset_format = getattr(cfg.datasets, "format", "coco").lower()
+    class_names = list(getattr(cfg.datasets, "class_names", []))
 
     logger.info("Task: %s | Model: %s | Epochs: %d | Batch: %d", task, model_slug, epochs, batch_size)
 
@@ -75,22 +77,50 @@ def main() -> None:
     train_transforms = build_augmentation_pipeline(image_size=cfg.datasets.image_size, mode="train")
     val_transforms = build_augmentation_pipeline(image_size=cfg.datasets.image_size, mode="val")
 
-    train_loader = build_dataloader(
-        annotations_file=Path(cfg.datasets.annotations_dir) / "train.json",
-        images_dir=Path(cfg.datasets.processed_dir) / "images",
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=cfg.datasets.num_workers,
-        task=task,
-    )
-    val_loader = build_dataloader(
-        annotations_file=Path(cfg.datasets.annotations_dir) / "val.json",
-        images_dir=Path(cfg.datasets.processed_dir) / "images",
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=cfg.datasets.num_workers,
-        task=task,
-    )
+    if dataset_format == "yolo":
+        train_loader = build_dataloader(
+            annotations_file=None,
+            images_dir=Path(cfg.datasets.processed_dir) / "images" / "train",
+            labels_dir=Path(cfg.datasets.processed_dir) / "labels" / "train",
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=cfg.datasets.num_workers,
+            transforms=train_transforms,
+            task=task,
+            split="train",
+            class_names=class_names,
+        )
+        val_loader = build_dataloader(
+            annotations_file=None,
+            images_dir=Path(cfg.datasets.processed_dir) / "images" / "val",
+            labels_dir=Path(cfg.datasets.processed_dir) / "labels" / "val",
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=cfg.datasets.num_workers,
+            transforms=val_transforms,
+            task=task,
+            split="val",
+            class_names=class_names,
+        )
+    else:
+        train_loader = build_dataloader(
+            annotations_file=Path(cfg.datasets.annotations_dir) / "train.json",
+            images_dir=Path(cfg.datasets.processed_dir) / "images",
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=cfg.datasets.num_workers,
+            transforms=train_transforms,
+            task=task,
+        )
+        val_loader = build_dataloader(
+            annotations_file=Path(cfg.datasets.annotations_dir) / "val.json",
+            images_dir=Path(cfg.datasets.processed_dir) / "images",
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=cfg.datasets.num_workers,
+            transforms=val_transforms,
+            task=task,
+        )
 
     num_classes = len(train_loader.dataset.class_names)  # type: ignore[attr-defined]
 
